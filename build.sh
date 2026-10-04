@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 APP=build/Tempo.app
 rm -rf build
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macos14.0 \
+swiftc -swift-version 5 -O -parse-as-library -target "$(uname -m)-apple-macos14.0" \
     Sources/*.swift -o "$APP/Contents/MacOS/Tempo"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

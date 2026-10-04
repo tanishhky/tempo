@@ -25,6 +25,7 @@ struct PanelView: View {
                     .trim(from: 0, to: m.progress)
                     .stroke(accent, style: StrokeStyle(lineWidth: 5, lineCap: .round))
                     .rotationEffect(.degrees(-90))
+                    .opacity(m.progress > 0 ? 1 : 0)
                     .animation(.linear(duration: 0.3), value: m.progress)
                 VStack(spacing: 2) {
                     Text(m.clock)

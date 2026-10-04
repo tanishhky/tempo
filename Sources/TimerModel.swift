@@ -299,3 +299,20 @@ enum MenuBarLabel {
         return image
     }
 }
+
+#if SCREENSHOTS
+// Fixed states for the README images; compiled only by tools/screenshots.sh.
+extension TimerModel {
+    func stage(phase: Phase, remaining: Int, running: Bool, paused: Bool = false, topic: String,
+               today: TimeInterval, sessions: Int, week: TimeInterval) {
+        self.phase = phase
+        self.topic = topic
+        endDate = running ? Date().addingTimeInterval(TimeInterval(remaining)) : nil
+        pausedRemaining = paused ? TimeInterval(remaining) : nil
+        secondsLeft = remaining
+        todaySeconds = today
+        todaySessions = sessions
+        weekSeconds = week
+    }
+}
+#endif
