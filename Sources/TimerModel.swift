@@ -2,22 +2,13 @@ import AppKit
 import ServiceManagement
 import UserNotifications
 
-enum Phase: String, Codable {
-    case focus, rest
-}
-
-struct Session: Codable {
-    let start: Date
-    let end: Date
-    let minutes: Double
-    let phase: Phase
-    let topic: String
-    let completed: Bool
-}
-
 @MainActor
 final class TimerModel: ObservableObject {
     static let shared = TimerModel()
+
+    let store = SessionStore.shared
+    let settings = AppSettings.shared
+    let bridge = FocusBridge.shared
 
     @Published var phase: Phase = .focus {
         didSet { if phase != oldValue { secondsLeft = Int(total) } }
@@ -34,9 +25,8 @@ final class TimerModel: ObservableObject {
     @Published private(set) var secondsLeft = 0
     @Published private(set) var endDate: Date?
     @Published private(set) var pausedRemaining: TimeInterval?
-    @Published private(set) var todaySeconds: TimeInterval = 0
-    @Published private(set) var todaySessions = 0
-    @Published private(set) var weekSeconds: TimeInterval = 0
+    /// Set by tempo://ledger and tempo://settings; the menu bar label opens the matching window.
+    @Published var windowRequest: String?
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     private let defaults = UserDefaults.standard
@@ -45,13 +35,6 @@ final class TimerModel: ObservableObject {
     private var activity: NSObjectProtocol?
     private let endNotificationID = "tempo.end"
 
-    private let logURL: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Tempo", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("sessions.jsonl")
-    }()
-
     init() {
         let f = defaults.integer(forKey: "focusMinutes")
         let r = defaults.integer(forKey: "restMinutes")
@@ -59,7 +42,6 @@ final class TimerModel: ObservableObject {
         restMinutes = r > 0 ? r : 10
         topic = defaults.string(forKey: "topic") ?? ""
         secondsLeft = Int(total)
-        loadStats()
     }
 
     // MARK: State
@@ -105,6 +87,7 @@ final class TimerModel: ObservableObject {
         t.tolerance = 0.05
         RunLoop.main.add(t, forMode: .common)
         ticker = t
+        syncDND()
     }
 
     func pause() {
@@ -113,19 +96,22 @@ final class TimerModel: ObservableObject {
         endDate = nil
         stopRunning()
         updateSeconds()
+        syncDND()
     }
 
     func toggle() { isRunning ? pause() : start() }
 
     func reset() {
-        logPartialFocus()
+        logPartial()
         clearRun()
+        syncDND()
     }
 
     func skip() {
-        logPartialFocus()
+        logPartial()
         clearRun()
         phase = phase == .focus ? .rest : .focus
+        syncDND()
     }
 
     func setMinutes(_ value: Int) {
@@ -146,6 +132,7 @@ final class TimerModel: ObservableObject {
         case "toggle": toggle()
         case "reset": reset()
         case "skip": skip()
+        case "ledger", "settings": windowRequest = url.host
         default: break
         }
     }
@@ -177,13 +164,14 @@ final class TimerModel: ObservableObject {
     private func complete() {
         let finished = phase
         if let start = sessionStart {
-            append(Session(start: start, end: Date(), minutes: total / 60, phase: finished,
-                           topic: finished == .focus ? topic : "", completed: true))
+            store.append(Session(start: start, end: Date(), minutes: total / 60, phase: finished,
+                                 topic: finished == .focus ? topic : "", completed: true))
         }
         endDate = nil
         clearRun(cancelNotification: false)
         NSSound(named: "Glass")?.play()
         phase = finished == .focus ? .rest : .focus
+        syncDND()
     }
 
     private func clearRun(cancelNotification: Bool = true) {
@@ -204,12 +192,19 @@ final class TimerModel: ObservableObject {
         }
     }
 
-    private func logPartialFocus() {
-        guard phase == .focus, let start = sessionStart else { return }
+    /// Stopping a block early still counts once at least a minute was spent, for focus and rest alike.
+    private func logPartial() {
+        guard let start = sessionStart else { return }
         let elapsed = total - remaining
         guard elapsed >= 60 else { return }
-        append(Session(start: start, end: Date(), minutes: elapsed / 60, phase: .focus,
-                       topic: topic, completed: false))
+        store.append(Session(start: start, end: Date(), minutes: elapsed / 60, phase: phase,
+                             topic: phase == .focus ? topic : "", completed: false))
+    }
+
+    /// Do Not Disturb follows the timer: on while a focus block runs (and breaks, if asked), off otherwise.
+    private func syncDND() {
+        let wantOn = isRunning && (phase == .focus || settings.dndDuringBreaks)
+        bridge.setActive(wantOn, ttlMinutes: Int(remaining / 60) + 6)
     }
 
     private func scheduleEndNotification(after seconds: TimeInterval) {
@@ -224,45 +219,6 @@ final class TimerModel: ObservableObject {
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
         UNUserNotificationCenter.current().add(
             UNNotificationRequest(identifier: endNotificationID, content: content, trigger: trigger))
-    }
-
-    // MARK: Log + stats
-
-    private func append(_ session: Session) {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.sortedKeys]
-        guard var line = try? encoder.encode(session) else { return }
-        line.append(0x0A)
-        if let handle = try? FileHandle(forWritingTo: logURL) {
-            handle.seekToEndOfFile()
-            handle.write(line)
-            try? handle.close()
-        } else {
-            try? line.write(to: logURL)
-        }
-        loadStats()
-    }
-
-    func loadStats() {
-        guard let text = try? String(contentsOf: logURL, encoding: .utf8) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let weekStart = cal.date(byAdding: .day, value: -6, to: today) ?? today
-        var day: TimeInterval = 0, week: TimeInterval = 0, done = 0
-        for line in text.split(separator: "\n") {
-            guard let s = try? decoder.decode(Session.self, from: Data(line.utf8)), s.phase == .focus else { continue }
-            if s.end >= today {
-                day += s.minutes * 60
-                if s.completed { done += 1 }
-            }
-            if s.end >= weekStart { week += s.minutes * 60 }
-        }
-        todaySeconds = day
-        todaySessions = done
-        weekSeconds = week
     }
 
     // MARK: Menu bar label
@@ -303,16 +259,12 @@ enum MenuBarLabel {
 #if SCREENSHOTS
 // Fixed states for the README images; compiled only by tools/screenshots.sh.
 extension TimerModel {
-    func stage(phase: Phase, remaining: Int, running: Bool, paused: Bool = false, topic: String,
-               today: TimeInterval, sessions: Int, week: TimeInterval) {
+    func stage(phase: Phase, remaining: Int, running: Bool, paused: Bool = false, topic: String) {
         self.phase = phase
         self.topic = topic
         endDate = running ? Date().addingTimeInterval(TimeInterval(remaining)) : nil
         pausedRemaining = paused ? TimeInterval(remaining) : nil
         secondsLeft = remaining
-        todaySeconds = today
-        todaySessions = sessions
-        weekSeconds = week
     }
 }
 #endif

@@ -13,6 +13,12 @@
 	<key>LSMinimumSystemVersion</key><string>14.0</string>
 	<key>LSUIElement</key><true/>
 	<key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Tempo talks to your own Android phone on this network to switch on Do Not Disturb during a focus session. Nothing else uses the network.</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key><true/>
+	</dict>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

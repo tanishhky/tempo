@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 TMP=$(mktemp -d)
 mkdir -p docs
-swiftc -swift-version 5 -parse-as-library -D SCREENSHOTS Sources/TimerModel.swift Sources/PanelView.swift tools/screenshots.swift \
+SOURCES=$(ls Sources/*.swift | grep -v TempoApp.swift)  # the harness has its own @main
+swiftc -swift-version 5 -parse-as-library -D SCREENSHOTS $SOURCES tools/screenshots.swift \
     -o "$TMP/tempo-screenshots"
 "$TMP/tempo-screenshots" "$PWD/docs"
 defaults delete tempo-screenshots >/dev/null 2>&1 || true

@@ -2,11 +2,17 @@ import SwiftUI
 
 struct PanelView: View {
     @ObservedObject var m: TimerModel
+    @ObservedObject var store: SessionStore
+    @ObservedObject var settings: AppSettings
+    @ObservedObject var bridge: FocusBridge
+    @Environment(\.openWindow) private var openWindow
 
-    private var accent: Color {
-        m.phase == .focus ? Color(red: 0.40, green: 0.40, blue: 0.95) : Color(red: 0.08, green: 0.66, blue: 0.60)
-    }
+    private var accent: Color { m.phase == .focus ? Theme.focus : Theme.rest }
     private var presets: [Int] { m.phase == .focus ? [25, 50, 90] : [5, 10, 20] }
+
+    private var today: Double { store.ledger.day(Date()).focus }
+    private var goal: Double { Double(settings.dailyGoalMinutes) }
+    private var streak: Int { store.ledger.streak(goal: goal).current }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -31,11 +37,13 @@ struct PanelView: View {
                     Text(m.clock)
                         .font(.system(size: 46, weight: .light, design: .rounded))
                         .monospacedDigit()
-                    Text(m.statusLine)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .frame(maxWidth: 150)
+                    HStack(spacing: 4) {
+                        if bridge.active { Image(systemName: "moon.fill").font(.caption2) }
+                        Text(bridge.active ? "Focusing, DND on" : m.statusLine)
+                    }
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
                 }
             }
             .frame(width: 196, height: 196)
@@ -85,28 +93,55 @@ struct PanelView: View {
 
             Divider().padding(.top, 2)
 
-            HStack {
-                Text("Today **\(duration(m.todaySeconds))** · \(m.todaySessions) done")
-                Spacer()
-                Text("7 days **\(duration(m.weekSeconds))**")
+            VStack(spacing: 7) {
+                HStack {
+                    Text("Today **\(Fmt.minutes(today))** of \(Fmt.minutes(goal))")
+                    Spacer()
+                    if streak > 0 {
+                        Label("\(streak)", systemImage: "flame.fill")
+                            .foregroundStyle(Theme.flame)
+                            .help("\(streak)-day streak of hitting your daily goal")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primary.opacity(0.08))
+                        Capsule().fill(today >= goal ? Theme.rest : Theme.focus)
+                            .frame(width: geo.size.width * min(1, today / max(goal, 1)))
+                    }
+                }
+                .frame(height: 4)
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
 
-            HStack {
-                Toggle("Open at login", isOn: Binding(get: { m.launchAtLogin }, set: { m.setLaunchAtLogin($0) }))
-                    .toggleStyle(.checkbox)
+            if let problem = bridge.phoneProblem ?? bridge.macProblem {
+                Text(problem)
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: 14) {
+                Button("Ledger") { show("ledger") }
+                Button("Settings") { show("settings") }
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
-                    .buttonStyle(.plain)
                     .keyboardShortcut("q")
             }
+            .buttonStyle(.plain)
             .font(.caption)
             .foregroundStyle(.secondary)
         }
         .padding(20)
         .frame(width: 300)
-        .onAppear { m.loadStats() }
+        .onAppear { store.reload() }
+    }
+
+    private func show(_ id: String) {
+        openWindow(id: id)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func roundButton(_ symbol: String, size: CGFloat, action: @escaping () -> Void) -> some View {
@@ -118,11 +153,5 @@ struct PanelView: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-    }
-
-    private func duration(_ seconds: TimeInterval) -> String {
-        let total = Int(seconds / 60)
-        let h = total / 60, m = total % 60
-        return h > 0 ? "\(h)h \(m)m" : "\(m)m"
     }
 }
