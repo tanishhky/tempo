@@ -59,7 +59,9 @@ struct SettingsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                 TextField("Phone address", text: $settings.phoneHost, prompt: Text("192.168.1.42"))
                 TextField("Port", value: $settings.phonePort, format: .number.grouping(.never))
-                SecureField("Token", text: $settings.phoneToken)
+                TextField("Token", text: $settings.phoneToken, prompt: Text("Paste the token from the phone"))
+                    .font(.system(.body, design: .monospaced))
+                    .autocorrectionDisabled()
                 HStack {
                     Button("Test connection") {
                         run {

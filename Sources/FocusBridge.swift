@@ -122,6 +122,9 @@ final class FocusBridge: ObservableObject {
         guard !c.host.isEmpty, let url = URL(string: "http://\(c.host):\(c.port)\(path)") else {
             return PhoneReply(ok: false, message: "Enter the phone's address first.")
         }
+        guard !c.token.isEmpty else {
+            return PhoneReply(ok: false, message: "Paste the token from the Tempo Companion app first.")
+        }
         var req = URLRequest(url: url, timeoutInterval: timeout)
         req.httpMethod = method
         req.setValue("Bearer \(c.token)", forHTTPHeaderField: "Authorization")
