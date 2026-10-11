@@ -27,9 +27,12 @@ Your history lives in one file on your Mac and nowhere else.
 ## Features
 
 - **Live menu bar countdown.** The label shows the phase and the time left, in monospaced digits so it never jitters.
-- **Focus and break modes.** Presets of 25, 50 and 90 minutes for focus and 5, 10 and 20 for breaks, adjustable in 5-minute steps.
+- **Any length.** Presets of 25, 50 and 90 minutes for focus and 5, 10 and 20 for breaks, plus any whole number of minutes you type or step through.
+- **Activities.** Track whatever you do: Study, Quiz, Reading, Rest, or your own. Each one counts as focus or rest, has a colour, and keeps its own history.
 - **A permanent ledger.** Every focus block and every break, kept forever, with totals for 7 days, 30 days, 90 days, a year or all time.
-- **A habit tracker.** A daily focus goal, a streak of days you hit it, and a year-long heatmap.
+- **Habits.** A daily focus goal, a streak of days you hit it, and a per-activity trend with its own streak and heatmap.
+- **A journal.** Daily checklists per activity, with a GitHub-style progress grid for each one.
+- **An AI assistant can help.** A small MCP server lets an assistant log time, add activities and tick journal items for you.
 - **Do Not Disturb that follows the timer.** Focus on your Mac and Do Not Disturb on your Android phone switch on when a session starts and off when it ends.
 - **A topic per session.** Note what you're studying and see time per topic.
 - **End-of-session alert.** A chime plays even when a Focus mode silences notifications, a banner appears, and Tempo moves to the next phase.
@@ -57,7 +60,8 @@ Open **Ledger** from the panel (or `tempo://ledger`) for the long view.
 ![The ledger: totals, hours per day, a year heatmap, time by topic and recent sessions](docs/ledger.png)
 
 - **Totals** for focus time, rest time, completed sessions and active days over the range you pick.
-- **Time studied** as stacked focus and rest bars per day, per week or per month depending on the range, with your daily goal as a dashed line.
+- **Time by activity** as stacked bars per day, each segment one activity, with your daily goal as a dashed line.
+- **Habits** for any one activity: its total, the days you logged it, the run of days logged in a row, a daily bar chart and a year heatmap. Pick the activity from the dropdown.
 - **Consistency** is a year of days, one square each, shaded by how close you got to your goal. Hover a square for that day's numbers.
 - **Streak** counts consecutive days you reached your goal. Today never breaks it until the day is over.
 - **By topic** and **Recent sessions** show where the time went.
@@ -162,9 +166,14 @@ Because the app is built locally rather than downloaded, Gatekeeper does not qua
 
 ```sh
 cd tempo
-git pull
-./build.sh --install
+./tools/update.sh
 ```
+
+The script copies your session log, activities, journal and settings into a timestamped folder under `~/Library/Application Support/Tempo/backups` first. It then fetches the new version (fast-forward only, so it never merges silently), runs the tests, builds and installs. It never moves or rewrites your data, and it stops before installing if anything fails. The newest ten backups are kept.
+
+If an update ever goes wrong, quit Tempo and copy the files back from the backup folder. The backup also holds a `settings.plist`, which you can restore with `defaults import me.tanishkyadav.tempo settings.plist`.
+
+No conversion is needed from an older version. Sessions logged before activities existed still count as Study or Rest, and the app reads them as they are.
 
 ### Uninstall
 
@@ -177,7 +186,7 @@ defaults delete me.tanishkyadav.tempo
 ## Usage
 
 1. Click the timer icon in the menu bar.
-2. Pick a length and, optionally, type what you're studying.
+2. Pick an activity, a length and, optionally, type what you're studying.
 3. Press Return to start.
 
 When the block ends, Tempo chimes, logs the session and switches to a break.
@@ -191,6 +200,45 @@ If you reset or skip a focus block after at least a minute, the minutes you put 
 | <kbd>⌘</kbd> <kbd>R</kbd> | Reset the current session |
 | <kbd>⌘</kbd> <kbd>Q</kbd> | Quit Tempo |
 
+## Activities and the journal
+
+Open **Settings** and find **Activities** to add, rename, recolour or remove them.
+
+- **Counts as** sets whether an activity is *Focus* (it counts toward your daily goal and turns Do Not Disturb on) or *Rest* (it doesn't).
+- **Journal checklist** lists the items that appear every day for that activity, such as "MCQ 1-20" for a Quiz.
+
+The panel shows a chip for each activity of the current kind. Pick one before you press Start, and the block is logged under it.
+Removing an activity never changes past sessions: they keep its name in the ledger.
+
+The **Journal** (`tempo://journal`, or the button in the panel) shows each activity's checklist for the day you pick. Tick items off, add one-off items, and leave a note. Each activity also gets a progress grid, one square per day, shaded by how much of its checklist you finished.
+
+## Letting an AI assistant log for you
+
+`tools/tempo_mcp.py` is a [Model Context Protocol](https://modelcontextprotocol.io) server with no dependencies. It reads and writes the same files as the app, so anything it logs appears in the ledger and journal once Tempo is active again.
+
+Register it with Claude Code, using the absolute path to your clone:
+
+```sh
+claude mcp add tempo -- python3 /absolute/path/to/tempo/tools/tempo_mcp.py
+```
+
+It offers these tools:
+
+| Tool | What it does |
+|---|---|
+| `tempo_list_activities` | Lists activities, with their ids, kinds and default checklists |
+| `tempo_add_activity` | Adds an activity, as focus or rest, with an optional checklist |
+| `tempo_log_session` | Logs minutes against an activity, for today or a past date |
+| `tempo_set_journal` | Sets the checklist and note for one activity on one day |
+| `tempo_get_journal` | Reads every checklist saved for a day |
+| `tempo_summary` | Time per activity over the last N days, with days logged and runs |
+
+Set `TEMPO_DATA_DIR` to point it at a different data folder. Its tests run without touching your data:
+
+```sh
+python3 -m unittest discover -s tools -p "test_*.py"
+```
+
 ## Raycast, Shortcuts and the terminal
 
 Tempo registers the `tempo://` URL scheme, so anything that can open a URL can control it.
@@ -203,6 +251,7 @@ Tempo registers the `tempo://` URL scheme, so anything that can open a URL can c
 | `tempo://reset` | Reset the current session |
 | `tempo://skip` | Skip to the next phase |
 | `tempo://ledger` | Open the ledger |
+| `tempo://journal` | Open the journal |
 | `tempo://settings` | Open Settings |
 
 From a terminal:
@@ -223,6 +272,9 @@ Tempo has no accounts, analytics, update checks or servers of its own.
 | What | Where |
 |---|---|
 | Sessions | `~/Library/Application Support/Tempo/sessions.jsonl` |
+| Activities | `~/Library/Application Support/Tempo/activities.json` |
+| Journal checklists | `~/Library/Application Support/Tempo/journal.jsonl` |
+| Backups, made by `tools/update.sh` | `~/Library/Application Support/Tempo/backups/` |
 | Settings (lengths, goal, phone address and token) | the `me.tanishkyadav.tempo` defaults domain |
 
 The ledger is built from this one file, so it is also your backup: copy it and you have your whole history.
@@ -254,12 +306,19 @@ Sources/
   PanelView.swift     The menu bar panel
   LedgerView.swift    The ledger window, chart and heatmap
   SettingsView.swift  The settings window
-  Theme.swift         Colours
+  Activities.swift    The activity list and its file
+  JournalStore.swift  Daily checklists and their file
+  JournalView.swift   The journal window
+  Theme.swift         Colours, and the palette activities pick from
 Resources/            Info.plist, AppIcon.svg and AppIcon.icns
 android/              Tempo Companion, the Android app (Kotlin, no dependencies) and its tests
 tools/
   make-icon.sh        Rebuilds AppIcon.icns and docs/icon.png from AppIcon.svg
   screenshots.sh      Renders the images in docs/ from the real views and sample data
+  selftest.sh         Checks the data layer (old history, activities, journal, streaks) in a temporary folder
+  update.sh           Backs up your data, pulls, tests, builds and installs
+  tempo_mcp.py        The MCP server for AI assistants (no dependencies)
+  test_tempo_mcp.py   Tests for the MCP server
 build.sh              Compiles and bundles Tempo.app; --install copies it to /Applications
 ```
 
