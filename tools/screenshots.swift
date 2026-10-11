@@ -174,7 +174,7 @@ enum Screenshots {
         m.settings.dailyGoalMinutes = 120
 
         func panel(dark: Bool, _ setup: @escaping () -> Void) -> NSImage {
-            snapshot(PanelView(m: m, store: m.store, settings: m.settings, bridge: m.bridge)
+            snapshot(PanelView(m: m, store: m.store, settings: m.settings, bridge: m.bridge, activities: m.activities)
                 .background(Color(nsColor: .windowBackgroundColor)), dark: dark, prepare: setup)
         }
 
@@ -195,8 +195,8 @@ enum Screenshots {
         save(snapshot(MenuBarStrip(items: [(idleLabel, "Idle"), (heroLabel, "Focus"), (pausedLabel, "Paused"), (restLabel, "Break")]), dark: true), "menubar.png")
 
         m.stage(phase: .focus, remaining: 3000, running: false, topic: "")
-        save(snapshot(LedgerView(store: m.store, settings: m.settings, height: 1010), dark: false, settle: 2.0), "ledger.png")
-        save(snapshot(LedgerView(store: m.store, settings: m.settings, height: 1010), dark: true, settle: 2.0), "ledger-dark.png")
-        save(snapshot(SettingsView(m: m, settings: m.settings, bridge: m.bridge, height: 1000), dark: false, settle: 1.0), "settings.png")
+        save(snapshot(LedgerView(store: m.store, settings: m.settings, activities: m.activities, height: 1010), dark: false, settle: 2.0), "ledger.png")
+        save(snapshot(LedgerView(store: m.store, settings: m.settings, activities: m.activities, height: 1010), dark: true, settle: 2.0), "ledger-dark.png")
+        save(snapshot(SettingsView(m: m, settings: m.settings, bridge: m.bridge, activities: m.activities, height: 1000), dark: false, settle: 1.0), "settings.png")
     }
 }

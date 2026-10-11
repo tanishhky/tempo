@@ -1,14 +1,22 @@
 import SwiftUI
 
+/// Text behind the length field. Kept as an object because Tempo builds without the @State macro.
+final class LengthDraft: ObservableObject {
+    @Published var text = ""
+}
+
 struct PanelView: View {
     @ObservedObject var m: TimerModel
     @ObservedObject var store: SessionStore
     @ObservedObject var settings: AppSettings
     @ObservedObject var bridge: FocusBridge
+    @ObservedObject var activities: ActivityStore
+    @StateObject private var length = LengthDraft()
     @Environment(\.openWindow) private var openWindow
 
     private var accent: Color { m.phase == .focus ? Theme.focus : Theme.rest }
     private var presets: [Int] { m.phase == .focus ? [25, 50, 90] : [5, 10, 20] }
+    private var choices: [Activity] { activities.activities(of: m.phase == .focus ? .focus : .rest) }
 
     private var today: Double { store.ledger.day(Date()).focus }
     private var goal: Double { Double(settings.dailyGoalMinutes) }
@@ -49,23 +57,41 @@ struct PanelView: View {
             .frame(width: 196, height: 196)
             .padding(.vertical, 4)
 
-            HStack(spacing: 6) {
-                roundButton("minus", size: 26) { m.nudge(-5) }
-                ForEach(presets, id: \.self) { p in
-                    Button { m.setMinutes(p) } label: {
-                        Text("\(p)")
-                            .font(.callout.weight(.medium))
-                            .monospacedDigit()
-                            .frame(width: 42, height: 26)
-                            .background(Capsule().fill(m.minutes == p ? accent.opacity(0.18) : Color.primary.opacity(0.06)))
-                            .foregroundStyle(m.minutes == p ? accent : Color.primary)
+            VStack(spacing: 8) {
+                HStack(spacing: 6) {
+                    ForEach(presets, id: \.self) { p in
+                        Button { m.setMinutes(p) } label: {
+                            Text("\(p)")
+                                .font(.callout.weight(.medium))
+                                .monospacedDigit()
+                                .frame(width: 42, height: 26)
+                                .background(Capsule().fill(m.minutes == p ? accent.opacity(0.18) : Color.primary.opacity(0.06)))
+                                .foregroundStyle(m.minutes == p ? accent : Color.primary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
-                roundButton("plus", size: 26) { m.nudge(5) }
+                HStack(spacing: 8) {
+                    roundButton("minus", size: 26) { m.nudge(-1) }
+                    TextField("", text: $length.text)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.center)
+                        .monospacedDigit()
+                        .frame(width: 44, height: 26)
+                        .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+                        .onSubmit(commitLength)
+                    Text("min").font(.caption).foregroundStyle(.secondary)
+                    roundButton("plus", size: 26) { m.nudge(1) }
+                }
             }
             .disabled(!m.isIdle)
             .opacity(m.isIdle ? 1 : 0.35)
+            .onAppear { length.text = "\(m.minutes)" }
+            .onChange(of: m.minutes) { _, value in length.text = "\(value)" }
+
+            activityChips
+                .disabled(!m.isIdle)
+                .opacity(m.isIdle ? 1 : 0.35)
 
             TextField("What are you studying?", text: $m.topic)
                 .textFieldStyle(.plain)
@@ -125,6 +151,7 @@ struct PanelView: View {
 
             HStack(spacing: 14) {
                 Button("Ledger") { show("ledger") }
+                Button("Journal") { show("journal") }
                 Button("Settings") { show("settings") }
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
@@ -137,6 +164,39 @@ struct PanelView: View {
         .padding(20)
         .frame(width: 300)
         .onAppear { store.reload() }
+    }
+
+    /// One chip per activity of the current kind. Tapping one picks what the next block is logged as.
+    private var activityChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(choices) { a in
+                    let selected = a.id == m.currentActivityID
+                    Button { m.setActivity(a.id) } label: {
+                        HStack(spacing: 5) {
+                            Circle().fill(activities.color(a.id)).frame(width: 7, height: 7)
+                            Text(a.name).lineLimit(1)
+                        }
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 10)
+                        .frame(height: 24)
+                        .background(Capsule().fill(selected ? activities.color(a.id).opacity(0.18) : Color.primary.opacity(0.06)))
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 2)
+        }
+        .frame(height: 26)
+    }
+
+    /// Accepts any whole number of minutes. Anything that isn't a number leaves the length unchanged.
+    private func commitLength() {
+        if let value = Int(length.text.trimmingCharacters(in: .whitespaces)) {
+            m.setMinutes(value)
+        }
+        length.text = "\(m.minutes)"
     }
 
     private func show(_ id: String) {

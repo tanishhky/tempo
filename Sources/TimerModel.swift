@@ -9,6 +9,7 @@ final class TimerModel: ObservableObject {
     let store = SessionStore.shared
     let settings = AppSettings.shared
     let bridge = FocusBridge.shared
+    let activities = ActivityStore.shared
 
     @Published var phase: Phase = .focus {
         didSet { if phase != oldValue { secondsLeft = Int(total) } }
@@ -22,10 +23,17 @@ final class TimerModel: ObservableObject {
     @Published var topic: String {
         didSet { defaults.set(topic, forKey: "topic") }
     }
+    /// The focus activity and the rest activity the next block will be logged under.
+    @Published var focusActivityID: String {
+        didSet { defaults.set(focusActivityID, forKey: "focusActivityID") }
+    }
+    @Published var restActivityID: String {
+        didSet { defaults.set(restActivityID, forKey: "restActivityID") }
+    }
     @Published private(set) var secondsLeft = 0
     @Published private(set) var endDate: Date?
     @Published private(set) var pausedRemaining: TimeInterval?
-    /// Set by tempo://ledger and tempo://settings; the menu bar label opens the matching window.
+    /// Set by tempo://ledger, tempo://journal and tempo://settings; the menu bar label opens the matching window.
     @Published var windowRequest: String?
     @Published private(set) var launchAtLogin = SMAppService.mainApp.status == .enabled
 
@@ -36,11 +44,14 @@ final class TimerModel: ObservableObject {
     private let endNotificationID = "tempo.end"
 
     init() {
-        let f = defaults.integer(forKey: "focusMinutes")
-        let r = defaults.integer(forKey: "restMinutes")
+        let store = ActivityStore.shared
+        let f = UserDefaults.standard.integer(forKey: "focusMinutes")
+        let r = UserDefaults.standard.integer(forKey: "restMinutes")
         focusMinutes = f > 0 ? f : 50
         restMinutes = r > 0 ? r : 10
-        topic = defaults.string(forKey: "topic") ?? ""
+        topic = UserDefaults.standard.string(forKey: "topic") ?? ""
+        focusActivityID = store.resolve(UserDefaults.standard.string(forKey: "focusActivityID") ?? Activity.study.id, kind: .focus)
+        restActivityID = store.resolve(UserDefaults.standard.string(forKey: "restActivityID") ?? Activity.rest.id, kind: .rest)
         secondsLeft = Int(total)
     }
 
@@ -52,6 +63,15 @@ final class TimerModel: ObservableObject {
     var isPaused: Bool { pausedRemaining != nil }
     var isIdle: Bool { endDate == nil && pausedRemaining == nil }
     var progress: Double { total > 0 ? max(0, min(1, 1 - Double(secondsLeft) / total)) : 0 }
+
+    /// The activity the current phase logs under. Falls back if the selected one was removed.
+    var currentActivityID: String { activityID(for: phase) }
+
+    func activityID(for phase: Phase) -> String {
+        phase == .focus
+            ? activities.resolve(focusActivityID, kind: .focus)
+            : activities.resolve(restActivityID, kind: .rest)
+    }
 
     private var remaining: TimeInterval {
         if let endDate { return max(0, endDate.timeIntervalSinceNow) }
@@ -114,14 +134,25 @@ final class TimerModel: ObservableObject {
         syncDND()
     }
 
+    /// Any whole number of minutes in range, not just the presets.
     func setMinutes(_ value: Int) {
         guard isIdle else { return }
-        if phase == .focus { focusMinutes = value } else { restMinutes = value }
+        let clamped = min(Self.range(for: phase).upperBound, max(Self.range(for: phase).lowerBound, value))
+        if phase == .focus { focusMinutes = clamped } else { restMinutes = clamped }
     }
 
     func nudge(_ delta: Int) {
-        let range = phase == .focus ? 5...240 : 5...60
-        setMinutes(min(range.upperBound, max(range.lowerBound, minutes + delta)))
+        setMinutes(minutes + delta)
+    }
+
+    static func range(for phase: Phase) -> ClosedRange<Int> {
+        phase == .focus ? 1...240 : 1...120
+    }
+
+    /// Chooses the activity for the current phase's kind. Only while idle, so a running block keeps its activity.
+    func setActivity(_ id: String) {
+        guard isIdle, let chosen = activities.activity(id) else { return }
+        if chosen.kind == .focus { focusActivityID = id } else { restActivityID = id }
     }
 
     func handle(_ url: URL) {
@@ -132,7 +163,7 @@ final class TimerModel: ObservableObject {
         case "toggle": toggle()
         case "reset": reset()
         case "skip": skip()
-        case "ledger", "settings": windowRequest = url.host
+        case "ledger", "settings", "journal": windowRequest = url.host
         default: break
         }
     }
@@ -165,7 +196,8 @@ final class TimerModel: ObservableObject {
         let finished = phase
         if let start = sessionStart {
             store.append(Session(start: start, end: Date(), minutes: total / 60, phase: finished,
-                                 topic: finished == .focus ? topic : "", completed: true))
+                                 topic: finished == .focus ? topic : "", completed: true,
+                                 activity: activityID(for: finished)))
         }
         endDate = nil
         clearRun(cancelNotification: false)
@@ -198,7 +230,8 @@ final class TimerModel: ObservableObject {
         let elapsed = total - remaining
         guard elapsed >= 60 else { return }
         store.append(Session(start: start, end: Date(), minutes: elapsed / 60, phase: phase,
-                             topic: phase == .focus ? topic : "", completed: false))
+                             topic: phase == .focus ? topic : "", completed: false,
+                             activity: activityID(for: phase)))
     }
 
     /// Do Not Disturb follows the timer: on while a focus block runs (and breaks, if asked), off otherwise.
@@ -209,9 +242,10 @@ final class TimerModel: ObservableObject {
 
     private func scheduleEndNotification(after seconds: TimeInterval) {
         let content = UNMutableNotificationContent()
+        let name = activities.name(currentActivityID)
         if phase == .focus {
             content.title = "Focus done"
-            content.body = "\(focusMinutes) min" + (topic.isEmpty ? "" : " of \(topic)") + ". Take \(restMinutes)."
+            content.body = "\(focusMinutes) min of \(name)" + (topic.isEmpty ? "" : ": \(topic)") + ". Take \(restMinutes)."
         } else {
             content.title = "Break over"
             content.body = "Back to it: \(focusMinutes) min of focus."
