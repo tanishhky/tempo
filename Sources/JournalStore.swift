@@ -55,7 +55,9 @@ final class JournalStore: ObservableObject {
     }
 
     func reload() {
-        guard let url, let text = try? String(contentsOf: url, encoding: .utf8) else {
+        // Without a file (the screenshot tool) the in-memory entries are the journal, so leave them alone.
+        guard let url else { return }
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             entries = [:]
             return
         }

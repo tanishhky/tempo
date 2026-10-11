@@ -155,7 +155,8 @@ enum Screenshots {
                 let focus = back == 0 ? 50.0 : [25.0, 50.0, 50.0, 90.0][Int(rnd() * 4)]
                 let topic = topics[(back / 9 + b) % topics.count]
                 let end = clock.addingTimeInterval(focus * 60)
-                out.append(Session(start: clock, end: end, minutes: focus, phase: .focus, topic: topic, completed: back == 0 || rnd() > 0.1))
+                out.append(Session(start: clock, end: end, minutes: focus, phase: .focus, topic: topic,
+                                    completed: back == 0 || rnd() > 0.1, activity: b == 1 ? "quiz" : "study"))
                 let rest = focus >= 50 ? 10.0 : 5.0
                 out.append(Session(start: end, end: end.addingTimeInterval(rest * 60), minutes: rest, phase: .rest, topic: "", completed: true))
                 clock = end.addingTimeInterval((rest + 20) * 60)
@@ -172,6 +173,28 @@ enum Screenshots {
         m.focusMinutes = 50
         m.restMinutes = 10
         m.settings.dailyGoalMinutes = 120
+
+        // Sample activities and a journal, so the activity chips, habits and journal have something to show.
+        let quiz = m.activities.add(name: "Quiz", kind: .focus)
+        m.activities.update(quiz.id) { $0.color = "violet"; $0.checklist = ["MCQ 1-20", "Review misses", "Flashcards"] }
+        m.activities.update("study") { $0.checklist = ["Read the chapter", "Problem set"] }
+        let calendarNow = Calendar.current
+        let todayStart = calendarNow.startOfDay(for: Date())
+        for back in 0..<60 {
+            let day = DayKey.string(calendarNow.date(byAdding: .day, value: -back, to: todayStart)!)
+            let quizTexts = ["MCQ 1-20", "Review misses", "Flashcards"]
+            let quizItems = quizTexts.enumerated().map { index, text in
+                ChecklistItem(text: text, done: (back * 31 + index * 17) % 7 < 5)
+            }
+            JournalStore.shared.save(JournalEntry(date: day, activity: quiz.id, items: quizItems,
+                                                  note: back == 0 ? "Mixed set, two misses on Greeks" : ""))
+            if back % 3 != 2 {
+                let studyItems = ["Read the chapter", "Problem set"].enumerated().map { index, text in
+                    ChecklistItem(text: text, done: (back + index) % 4 != 0)
+                }
+                JournalStore.shared.save(JournalEntry(date: day, activity: "study", items: studyItems, note: ""))
+            }
+        }
 
         func panel(dark: Bool, _ setup: @escaping () -> Void) -> NSImage {
             snapshot(PanelView(m: m, store: m.store, settings: m.settings, bridge: m.bridge, activities: m.activities)
@@ -198,5 +221,7 @@ enum Screenshots {
         save(snapshot(LedgerView(store: m.store, settings: m.settings, activities: m.activities, height: 1010), dark: false, settle: 2.0), "ledger.png")
         save(snapshot(LedgerView(store: m.store, settings: m.settings, activities: m.activities, height: 1010), dark: true, settle: 2.0), "ledger-dark.png")
         save(snapshot(SettingsView(m: m, settings: m.settings, bridge: m.bridge, activities: m.activities, height: 1000), dark: false, settle: 1.0), "settings.png")
+        save(snapshot(JournalView(journal: JournalStore.shared, activities: m.activities), dark: false, settle: 1.0), "journal.png")
+        save(snapshot(JournalView(journal: JournalStore.shared, activities: m.activities), dark: true, settle: 1.0), "journal-dark.png")
     }
 }

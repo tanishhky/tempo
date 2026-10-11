@@ -212,6 +212,8 @@ Removing an activity never changes past sessions: they keep its name in the ledg
 
 The **Journal** (`tempo://journal`, or the button in the panel) shows each activity's checklist for the day you pick. Tick items off, add one-off items, and leave a note. Each activity also gets a progress grid, one square per day, shaded by how much of its checklist you finished.
 
+![The journal: today's checklists for each activity, with a progress grid below](docs/journal.png)
+
 ## Letting an AI assistant log for you
 
 `tools/tempo_mcp.py` is a [Model Context Protocol](https://modelcontextprotocol.io) server with no dependencies. It reads and writes the same files as the app, so anything it logs appears in the ledger and journal once Tempo is active again.
