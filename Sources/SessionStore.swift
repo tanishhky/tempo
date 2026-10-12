@@ -11,8 +11,22 @@ struct Session: Codable, Identifiable {
     let phase: Phase
     let topic: String
     let completed: Bool
+    /// Activity id, such as "study" or "quiz". Sessions written before activities existed have none,
+    /// and count as Study or Rest by phase.
+    let activity: String?
 
-    var id: String { "\(start.timeIntervalSince1970)-\(phase.rawValue)" }
+    init(start: Date, end: Date, minutes: Double, phase: Phase, topic: String, completed: Bool, activity: String? = nil) {
+        self.start = start
+        self.end = end
+        self.minutes = minutes
+        self.phase = phase
+        self.topic = topic
+        self.completed = completed
+        self.activity = activity
+    }
+
+    var activityID: String { activity ?? (phase == .rest ? Activity.rest.id : Activity.study.id) }
+    var id: String { "\(start.timeIntervalSince1970)-\(activityID)" }
 }
 
 struct DayTotals {
@@ -30,16 +44,20 @@ enum Fmt {
     }
 }
 
-/// Everything derived from the session log: per-day totals, streaks, topic breakdown.
+/// Everything derived from the session log: per-day totals, per-activity minutes, streaks, topic breakdown.
 struct Ledger {
     let calendar: Calendar
     let sessions: [Session]
+    /// Focus and rest minutes per day, by phase. These drive the daily goal and the streak.
     let byDay: [Date: DayTotals]
+    /// Minutes per activity id, per day. Drives the stacked chart and the habit views.
+    let byDayActivity: [Date: [String: Double]]
 
     init(_ sessions: [Session], calendar: Calendar = .current) {
         self.calendar = calendar
         self.sessions = sessions
         var days: [Date: DayTotals] = [:]
+        var perActivity: [Date: [String: Double]] = [:]
         for s in sessions {
             let key = calendar.startOfDay(for: s.end)
             var t = days[key, default: DayTotals()]
@@ -51,13 +69,20 @@ struct Ledger {
                 t.rest += s.minutes
             }
             days[key] = t
+            perActivity[key, default: [:]][s.activityID, default: 0] += s.minutes
         }
         byDay = days
+        byDayActivity = perActivity
     }
 
     var firstDay: Date? { byDay.keys.min() }
 
     func day(_ date: Date) -> DayTotals { byDay[calendar.startOfDay(for: date)] ?? DayTotals() }
+
+    /// Minutes logged for one activity on one day.
+    func minutes(_ activity: String, on date: Date) -> Double {
+        byDayActivity[calendar.startOfDay(for: date)]?[activity] ?? 0
+    }
 
     func total(since: Date?) -> DayTotals {
         let from = since.map { calendar.startOfDay(for: $0) }
@@ -75,12 +100,41 @@ struct Ledger {
         return byDay.filter { ($0.value.focus > 0) && (from == nil || $0.key >= from!) }.count
     }
 
-    /// Consecutive days with at least `goal` minutes of focus. Today does not break the
-    /// streak until it has ended, so the current run counts back from yesterday if today is short.
-    func streak(goal: Double, today: Date = Date()) -> (current: Int, longest: Int) {
+    /// Minutes per activity since a date, largest first.
+    func activityTotals(since: Date?) -> [(id: String, minutes: Double)] {
+        let from = since.map { calendar.startOfDay(for: $0) }
+        var sums: [String: Double] = [:]
+        for (day, perActivity) in byDayActivity where from == nil || day >= from! {
+            for (id, m) in perActivity { sums[id, default: 0] += m }
+        }
+        return sums.map { (id: $0.key, minutes: $0.value) }.sorted { $0.minutes > $1.minutes }
+    }
+
+    /// Minutes logged for one activity since a date (nil means all time).
+    func minutes(_ activity: String, since: Date?) -> Double {
+        let from = since.map { calendar.startOfDay(for: $0) }
+        return byDayActivity.reduce(0) { sum, entry in
+            guard from == nil || entry.key >= from! else { return sum }
+            return sum + (entry.value[activity] ?? 0)
+        }
+    }
+
+    /// Days with any minutes for one activity since a date.
+    func activeDays(_ activity: String, since: Date?) -> Int {
+        let from = since.map { calendar.startOfDay(for: $0) }
+        return byDayActivity.filter { ($0.value[activity] ?? 0) > 0 && (from == nil || $0.key >= from!) }.count
+    }
+
+    /// Consecutive days meeting `goal` minutes. With `activity` set, it counts that activity's minutes instead
+    /// of focus. Today does not break the streak until it has ended, so the run counts back from yesterday if today is short.
+    func streak(goal: Double, today: Date = Date(), activity: String? = nil) -> (current: Int, longest: Int) {
         let goal = max(goal, 1)
         let todayStart = calendar.startOfDay(for: today)
-        func hit(_ d: Date) -> Bool { (byDay[d]?.focus ?? 0) >= goal }
+        func minutesOn(_ d: Date) -> Double {
+            guard let activity else { return byDay[d]?.focus ?? 0 }
+            return byDayActivity[d]?[activity] ?? 0
+        }
+        func hit(_ d: Date) -> Bool { minutesOn(d) >= goal }
         func shift(_ d: Date, _ n: Int) -> Date { calendar.date(byAdding: .day, value: n, to: d)! }
 
         var cursor = hit(todayStart) ? todayStart : shift(todayStart, -1)
@@ -123,12 +177,7 @@ final class SessionStore: ObservableObject {
     @Published private(set) var ledger = Ledger([])
     let url: URL?
 
-    static var defaultURL: URL {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Tempo", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("sessions.jsonl")
-    }
+    static var defaultURL: URL { TempoFiles.directory.appendingPathComponent("sessions.jsonl") }
 
     init(url: URL?) {
         self.url = url
@@ -165,13 +214,15 @@ final class SessionStore: ObservableObject {
         }
     }
 
+    /// Columns are only ever added at the end, so spreadsheets built on the old export keep working.
     func csv() -> String {
         let iso = ISO8601DateFormatter()
         func esc(_ s: String) -> String { "\"" + s.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }
-        var rows = ["start,end,phase,minutes,topic,completed"]
+        var rows = ["start,end,phase,minutes,topic,completed,activity"]
         for s in sessions {
             rows.append([iso.string(from: s.start), iso.string(from: s.end), s.phase.rawValue,
-                         String(format: "%.2f", s.minutes), esc(s.topic), s.completed ? "true" : "false"].joined(separator: ","))
+                         String(format: "%.2f", s.minutes), esc(s.topic), s.completed ? "true" : "false",
+                         esc(s.activityID)].joined(separator: ","))
         }
         return rows.joined(separator: "\n") + "\n"
     }
